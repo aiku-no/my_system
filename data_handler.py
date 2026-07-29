@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
+import requests
 import talib
 
 from config import OandaConfig, Timeframe, CurrencyPair
@@ -19,21 +20,14 @@ class DataHandler:
     
     def __init__(self, config: OandaConfig):
         self.config = config
-        self.ctx = None
-        self._initialize_api()
-    
-    def _initialize_api(self):
-        """Initialize OANDA API context"""
-        try:
-            from v20 import Context
-            self.ctx = Context(
-                domain=self.config.hostname,
-                token=self.config.api_token
-            )
-            logger.info("OANDA API context initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize OANDA API: {e}")
-            raise
+        self.session = requests.Session()
+        self.session.headers.update({
+            'Authorization': f'Bearer {self.config.api_token}',
+            'Content-Type': 'application/json',
+            'Accept-Datetime-Format': 'RFC3339'
+        })
+        self.base_url = f"https://{self.config.hostname}/v3"
+        logger.info(f"DataHandler initialized for {self.config.hostname}")
     
     def get_candles(self, instrument: str, timeframe: Timeframe, 
                     count: int = 100) -> Optional[pd.DataFrame]:
@@ -49,22 +43,27 @@ class DataHandler:
             DataFrame with OHLCV data
         """
         try:
-            response = self.ctx.instrument.candles(
-                instrument=instrument,
-                granularity=timeframe.value,
-                count=count
-            )
+            url = f"{self.base_url}/instruments/{instrument}/candles"
+            params = {
+                'granularity': timeframe.value,
+                'count': count
+            }
+            
+            response = self.session.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
             
             candles = []
-            for candle in response.get("candles", []):
-                if candle.type == "MID":
+            for candle in data.get("candles", []):
+                if candle.get("complete", True):  # Only complete candles
+                    mid = candle.get("mid", {})
                     candles.append({
-                        'timestamp': pd.to_datetime(candle.time),
-                        'open': float(candle.mid.o),
-                        'high': float(candle.mid.h),
-                        'low': float(candle.mid.l),
-                        'close': float(candle.mid.c),
-                        'volume': int(candle.volume)
+                        'timestamp': pd.to_datetime(candle.get("time")),
+                        'open': float(mid.get("o", 0)),
+                        'high': float(mid.get("h", 0)),
+                        'low': float(mid.get("l", 0)),
+                        'close': float(mid.get("c", 0)),
+                        'volume': int(candle.get("volume", 0))
                     })
             
             if not candles:
@@ -81,19 +80,26 @@ class DataHandler:
     def get_current_price(self, instrument: str) -> Optional[Dict]:
         """Get current bid/ask prices for an instrument"""
         try:
-            response = self.ctx.pricing.get(
-                accountID=self.config.account_id,
-                instruments=instrument
-            )
+            url = f"{self.base_url}/accounts/{self.config.account_id}/pricing"
+            params = {'instruments': instrument}
             
-            for price in response.get("prices", []):
-                if price.instrument == instrument:
-                    return {
-                        'bid': float(price.bids[0].price),
-                        'ask': float(price.asks[0].price),
-                        'spread': float(price.asks[0].price) - float(price.bids[0].price),
-                        'timestamp': pd.to_datetime(price.time)
-                    }
+            response = self.session.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            for price in data.get("prices", []):
+                if price.get("instrument") == instrument:
+                    bids = price.get("bids", [{}])
+                    asks = price.get("asks", [{}])
+                    if bids and asks:
+                        bid = float(bids[0].get("price", 0))
+                        ask = float(asks[0].get("price", 0))
+                        return {
+                            'bid': bid,
+                            'ask': ask,
+                            'spread': ask - bid,
+                            'timestamp': pd.to_datetime(price.get("time"))
+                        }
             return None
             
         except Exception as e:
@@ -103,17 +109,20 @@ class DataHandler:
     def get_account_info(self) -> Optional[Dict]:
         """Get current account information"""
         try:
-            response = self.ctx.account.get(
-                accountID=self.config.account_id
-            )
-            account = response.get("account", {})
+            url = f"{self.base_url}/accounts/{self.config.account_id}"
+            
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            account = data.get("account", {})
             return {
-                'balance': float(account.balance),
-                'nav': float(account.nav),
-                'margin_used': float(account.marginUsed),
-                'margin_available': float(account.marginAvailable),
-                'position_count': len(account.positions),
-                'open_trade_count': account.openTradeCount
+                'balance': float(account.get("balance", 0)),
+                'nav': float(account.get("nav", 0)),
+                'margin_used': float(account.get("marginUsed", 0)),
+                'margin_available': float(account.get("marginAvailable", 0)),
+                'position_count': len(account.get("positions", [])),
+                'open_trade_count': int(account.get("openTradeCount", 0))
             }
         except Exception as e:
             logger.error(f"Error fetching account info: {e}")
