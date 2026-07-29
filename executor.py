@@ -50,31 +50,44 @@ class OrderExecutor:
         try:
             url = f"{self.base_url}/accounts/{self.config.account_id}/orders"
             
+            # Determine price precision (5 for most, 3 for JPY pairs)
+            precision = 3 if 'JPY' in instrument else 5
+            
             # Build order data
             order_data = {
                 "order": {
                     "instrument": instrument,
                     "units": str(units),
-                    "timeInForce": "FOK",
-                    "positionFill": "OPEN",
+                    "timeInForce": "GTC",
+                    "positionFill": "DEFAULT",
                     "type": "MARKET"
                 }
             }
             
             # Add stop loss if provided
-            if stop_loss:
+            if stop_loss is not None:
+                sl_price = round(stop_loss, precision)
                 order_data["order"]["stopLossOnFill"] = {
-                    "price": str(stop_loss),
+                    "price": str(sl_price),
                     "timeInForce": "GTC"
                 }
             
             # Add take profit if provided
-            if take_profit:
+            if take_profit is not None:
+                tp_price = round(take_profit, precision)
                 order_data["order"]["takeProfitOnFill"] = {
-                    "price": str(take_profit)
+                    "price": str(tp_price),
+                    "timeInForce": "GTC"
                 }
             
+            logger.info(f"Sending order to OANDA: {order_data}")
+            
             response = self.session.post(url, json=order_data, timeout=10)
+            
+            # Log full response for debugging
+            if response.status_code != 201:
+                logger.error(f"OANDA API Error {response.status_code}: {response.text}")
+            
             response.raise_for_status()
             result = response.json()
             
