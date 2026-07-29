@@ -25,7 +25,7 @@ class DataHandler:
     def _initialize_api(self):
         """Initialize OANDA API context"""
         try:
-            from v20.context import Context
+            from v20 import Context
             self.ctx = Context(
                 domain=self.config.hostname,
                 token=self.config.api_token
