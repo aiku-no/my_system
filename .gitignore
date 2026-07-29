@@ -1,0 +1,27 @@
+```
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Dependencies
+.venv/
+venv/
+lib/
+share/
+include/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+```
