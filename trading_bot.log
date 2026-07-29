@@ -1,0 +1,10 @@
+2026-07-29 15:17:21,623 - __main__ - ERROR - Fatal error: OANDA API token not provided. Set OANDA_API_TOKEN environment variable.
+Traceback (most recent call last):
+  File "/workspace/trading_bot.py", line 384, in main
+    bot = ForexTradingBot()
+          ^^^^^^^^^^^^^^^^^
+  File "/workspace/trading_bot.py", line 50, in __init__
+    self._validate_config()
+  File "/workspace/trading_bot.py", line 76, in _validate_config
+    raise ValueError("OANDA API token not provided. Set OANDA_API_TOKEN environment variable.")
+ValueError: OANDA API token not provided. Set OANDA_API_TOKEN environment variable.
