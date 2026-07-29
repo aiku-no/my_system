@@ -218,10 +218,11 @@ class ForexTradingBot:
                 logger.warning(f"Could not get sentiment for {instrument}: {e}")
                 sentiment_score = 0.0
         
-        # Generate trading signal
+        # Generate trading signal based on configured strategy
+        strategy_type = self._get_strategy_type_from_config()
         signal = self.strategy.generate_signal(
             df, 
-            StrategyType.COMBO_STRATEGY,
+            strategy_type,
             sentiment_score
         )
         
@@ -353,6 +354,18 @@ class ForexTradingBot:
         # This would need to fetch closed trades from OANDA
         # For now, return 0
         return 0.0
+    
+    def _get_strategy_type_from_config(self) -> StrategyType:
+        """Convert config strategy string to StrategyType enum"""
+        strategy_map = {
+            "EMA_CROSS": StrategyType.EMA_CROSS,
+            "RSI_MR": StrategyType.RSI_MEAN_REVERSION,
+            "BB_BREAK": StrategyType.BOLLINGER_BREAKOUT,
+            "MACD_MOM": StrategyType.MACD_MOMENTUM,
+            "STOCH_REV": StrategyType.STOCHASTIC_REVERSAL,
+            "COMBO": StrategyType.COMBO_STRATEGY
+        }
+        return strategy_map.get(self.trading_config.active_strategy, StrategyType.COMBO_STRATEGY)
     
     def get_status(self) -> Dict:
         """Get current bot status"""

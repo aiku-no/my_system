@@ -2,7 +2,7 @@
 Configuration settings for the Forex Trading Bot
 """
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Dict
 from enum import Enum
 
@@ -68,6 +68,9 @@ class TradingConfig:
     
     # Loop timing
     check_interval_seconds: int = 60  # Check every minute
+    
+    # Active strategy (change this to switch strategies)
+    active_strategy: str = "COMBO"  # Options: EMA_CROSS, RSI_MR, BB_BREAK, MACD_MOM, STOCH_REV, COMBO
     
     def __post_init__(self):
         if self.pairs is None:
