@@ -5,9 +5,7 @@ import logging
 from typing import Dict, Optional, List
 from datetime import datetime
 import pandas as pd
-
-import v20
-from v20 import primitives
+import requests
 
 from config import OandaConfig, Timeframe
 from strategy import SignalType
@@ -24,20 +22,14 @@ class OrderExecutor:
     
     def __init__(self, config: OandaConfig):
         self.config = config
-        self.ctx = None
-        self._initialize_api()
-    
-    def _initialize_api(self):
-        """Initialize OANDA API context"""
-        try:
-            self.ctx = v20.Context(
-                domain=self.config.hostname,
-                token=self.config.api_token
-            )
-            logger.info("Order Executor API initialized")
-        except Exception as e:
-            logger.error(f"Failed to initialize Order Executor API: {e}")
-            raise
+        self.session = requests.Session()
+        self.session.headers.update({
+            'Authorization': f'Bearer {self.config.api_token}',
+            'Content-Type': 'application/json',
+            'Accept-Datetime-Format': 'RFC3339'
+        })
+        self.base_url = f"https://{self.config.hostname}/v3"
+        logger.info("Order Executor initialized")
     
     def place_market_order(self, instrument: str, 
                           units: int,
@@ -56,57 +48,53 @@ class OrderExecutor:
             Order response dictionary
         """
         try:
-            # Determine order type
-            if units > 0:
-                position = primitives.PositionFill.OPEN
-            else:
-                position = primitives.PositionFill.CLOSE
+            url = f"{self.base_url}/accounts/{self.config.account_id}/orders"
             
-            # Create the order request
-            order_request = primitives.MarketOrderRequest(
-                instrument=instrument,
-                units=units,
-                positionFill=position,
-                reason="CLIENT_REQUEST"
-            )
+            # Build order data
+            order_data = {
+                "order": {
+                    "instrument": instrument,
+                    "units": str(units),
+                    "timeInForce": "FOK",
+                    "positionFill": "OPEN",
+                    "type": "MARKET"
+                }
+            }
             
             # Add stop loss if provided
             if stop_loss:
-                order_request.stopLossOnFill = primitives.StopLossDetails(
-                    price=stop_loss,
-                    timeInForce=primitives.TimeInForce.GTC
-                )
+                order_data["order"]["stopLossOnFill"] = {
+                    "price": str(stop_loss),
+                    "timeInForce": "GTC"
+                }
             
             # Add take profit if provided
             if take_profit:
-                order_request.takeProfitOnFill = primitives.TakeProfitDetails(
-                    price=take_profit
-                )
+                order_data["order"]["takeProfitOnFill"] = {
+                    "price": str(take_profit)
+                }
             
-            # Place the order
-            response = self.ctx.order.market(
-                accountID=self.config.account_id,
-                order=order_request
-            )
+            response = self.session.post(url, json=order_data, timeout=10)
+            response.raise_for_status()
+            result = response.json()
             
-            # Parse response
-            order_data = {
-                'order_id': response.get('orderCreateTransaction', {}).get('id'),
+            order_response = {
+                'order_id': result.get('orderCreateTransaction', {}).get('id'),
                 'instrument': instrument,
                 'units': units,
                 'direction': 'BUY' if units > 0 else 'SELL',
-                'status': response.get('orderCreateTransaction', {}).get('reason'),
+                'status': result.get('orderCreateTransaction', {}).get('reason'),
                 'timestamp': datetime.now(),
                 'success': True
             }
             
             # Get trade ID if filled
-            if 'orderFillTransaction' in response:
-                order_data['trade_id'] = response['orderFillTransaction'].get('tradeID')
-                order_data['fill_price'] = response['orderFillTransaction'].get('price')
+            if 'orderFillTransaction' in result:
+                order_response['trade_id'] = result['orderFillTransaction'].get('tradeID')
+                order_response['fill_price'] = float(result['orderFillTransaction'].get('price', 0))
             
-            logger.info(f"Order placed: {instrument} {units} units - {order_data['order_id']}")
-            return order_data
+            logger.info(f"Order placed: {instrument} {units} units - {order_response['order_id']}")
+            return order_response
             
         except Exception as e:
             logger.error(f"Failed to place market order: {e}")
@@ -137,44 +125,44 @@ class OrderExecutor:
             Order response dictionary
         """
         try:
+            url = f"{self.base_url}/accounts/{self.config.account_id}/orders"
+            
             if order_type.upper() == 'LIMIT':
-                order_request = primitives.LimitOrderRequest(
-                    instrument=instrument,
-                    units=units,
-                    price=price,
-                    positionFill=primitives.PositionFill.OPEN,
-                    timeInForce=primitives.TimeInForce.GTC
-                )
+                oanda_type = 'LIMIT'
             elif order_type.upper() == 'STOP':
-                order_request = primitives.StopOrderRequest(
-                    instrument=instrument,
-                    units=units,
-                    price=price,
-                    positionFill=primitives.PositionFill.OPEN,
-                    timeInForce=primitives.TimeInForce.GTC
-                )
+                oanda_type = 'STOP'
             else:
                 raise ValueError(f"Invalid order type: {order_type}")
             
+            order_data = {
+                "order": {
+                    "instrument": instrument,
+                    "units": str(units),
+                    "price": str(price),
+                    "timeInForce": "GTC",
+                    "positionFill": "OPEN",
+                    "type": oanda_type
+                }
+            }
+            
             # Add SL/TP if provided
             if stop_loss:
-                order_request.stopLossOnFill = primitives.StopLossDetails(
-                    price=stop_loss,
-                    timeInForce=primitives.TimeInForce.GTC
-                )
+                order_data["order"]["stopLossOnFill"] = {
+                    "price": str(stop_loss),
+                    "timeInForce": "GTC"
+                }
             
             if take_profit:
-                order_request.takeProfitOnFill = primitives.TakeProfitDetails(
-                    price=take_profit
-                )
+                order_data["order"]["takeProfitOnFill"] = {
+                    "price": str(take_profit)
+                }
             
-            response = self.ctx.order.pending(
-                accountID=self.config.account_id,
-                order=order_request
-            )
+            response = self.session.post(url, json=order_data, timeout=10)
+            response.raise_for_status()
+            result = response.json()
             
-            order_data = {
-                'order_id': response.get('orderCreateTransaction', {}).get('id'),
+            order_response = {
+                'order_id': result.get('orderCreateTransaction', {}).get('id'),
                 'instrument': instrument,
                 'units': units,
                 'type': order_type,
@@ -185,7 +173,7 @@ class OrderExecutor:
             }
             
             logger.info(f"Pending order placed: {order_type} {instrument} @ {price}")
-            return order_data
+            return order_response
             
         except Exception as e:
             logger.error(f"Failed to place pending order: {e}")
@@ -207,15 +195,16 @@ class OrderExecutor:
             Close response dictionary
         """
         try:
-            response = self.ctx.trade.close(
-                accountID=self.config.account_id,
-                tradeID=trade_id
-            )
+            url = f"{self.base_url}/accounts/{self.config.account_id}/trades/{trade_id}/close"
+            
+            response = self.session.put(url, json={}, timeout=10)
+            response.raise_for_status()
+            result = response.json()
             
             close_data = {
                 'trade_id': trade_id,
-                'close_transaction_id': response.get('orderCreateTransaction', {}).get('id'),
-                'pnl': response.get('orderFillTransaction', {}).get('pl'),
+                'close_transaction_id': result.get('orderCreateTransaction', {}).get('id'),
+                'pnl': result.get('orderFillTransaction', {}).get('pl'),
                 'timestamp': datetime.now(),
                 'success': True
             }
@@ -244,19 +233,25 @@ class OrderExecutor:
             Modification response
         """
         try:
-            response = self.ctx.trade.set_dependent_orders(
-                accountID=self.config.account_id,
-                tradeID=trade_id,
-                stopLoss=primitives.StopLossDetails(
-                    price=stop_loss,
-                    timeInForce=primitives.TimeInForce.GTC
-                )
-            )
+            url = f"{self.base_url}/accounts/{self.config.account_id}/trades/{trade_id}/orders"
+            
+            order_data = {
+                "order": {
+                    "tradeID": trade_id,
+                    "price": str(stop_loss),
+                    "type": "STOP_LOSS",
+                    "timeInForce": "GTC"
+                }
+            }
+            
+            response = self.session.post(url, json=order_data, timeout=10)
+            response.raise_for_status()
+            result = response.json()
             
             mod_data = {
                 'trade_id': trade_id,
                 'new_stop_loss': stop_loss,
-                'transaction_id': response.get('stopLossOrderTransaction', {}).get('id'),
+                'transaction_id': result.get('stopLossOrderTransaction', {}).get('id'),
                 'timestamp': datetime.now(),
                 'success': True
             }
@@ -280,21 +275,26 @@ class OrderExecutor:
             List of open trade dictionaries
         """
         try:
-            response = self.ctx.trade.open(
-                accountID=self.config.account_id
-            )
+            url = f"{self.base_url}/accounts/{self.config.account_id}/openTrades"
+            
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
             
             trades = []
-            for trade in response.get('trades', []):
+            for trade in data.get('trades', []):
+                sl_order = trade.get('stopLossOrder', {})
+                tp_order = trade.get('takeProfitOrder', {})
+                
                 trade_data = {
-                    'trade_id': trade.id,
-                    'instrument': trade.instrument,
-                    'units': float(trade.currentUnits),
-                    'avg_price': float(trade.price),
-                    'unrealized_pl': float(trade.unrealizedPL),
-                    'stop_loss': float(trade.stopLossOrder.price) if trade.stopLossOrder else None,
-                    'take_profit': float(trade.takeProfitOrder.price) if trade.takeProfitOrder else None,
-                    'open_time': trade.openTime
+                    'trade_id': trade.get('id'),
+                    'instrument': trade.get('instrument'),
+                    'units': float(trade.get('currentUnits', 0)),
+                    'avg_price': float(trade.get('price', 0)),
+                    'unrealized_pl': float(trade.get('unrealizedPL', 0)),
+                    'stop_loss': float(sl_order.get('price', 0)) if sl_order else None,
+                    'take_profit': float(tp_order.get('price', 0)) if tp_order else None,
+                    'open_time': trade.get('openTime')
                 }
                 trades.append(trade_data)
             
@@ -312,19 +312,21 @@ class OrderExecutor:
             List of pending order dictionaries
         """
         try:
-            response = self.ctx.order.pending(
-                accountID=self.config.account_id
-            )
+            url = f"{self.base_url}/accounts/{self.config.account_id}/pendingOrders"
+            
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
             
             orders = []
-            for order in response.get('orders', []):
+            for order in data.get('orders', []):
                 order_data = {
-                    'order_id': order.id,
-                    'instrument': order.instrument,
-                    'units': float(order.units),
-                    'price': float(order.price) if hasattr(order, 'price') else None,
-                    'type': order.type,
-                    'state': order.state
+                    'order_id': order.get('id'),
+                    'instrument': order.get('instrument'),
+                    'units': float(order.get('units', 0)),
+                    'price': float(order.get('price', 0)) if order.get('price') else None,
+                    'type': order.get('type'),
+                    'state': order.get('state')
                 }
                 orders.append(order_data)
             
@@ -345,14 +347,15 @@ class OrderExecutor:
             Cancellation response
         """
         try:
-            response = self.ctx.order.cancel(
-                accountID=self.config.account_id,
-                orderID=order_id
-            )
+            url = f"{self.base_url}/accounts/{self.config.account_id}/orders/{order_id}/cancel"
+            
+            response = self.session.put(url, json={}, timeout=10)
+            response.raise_for_status()
+            result = response.json()
             
             cancel_data = {
                 'order_id': order_id,
-                'cancel_transaction_id': response.get('orderCancelTransaction', {}).get('id'),
+                'cancel_transaction_id': result.get('orderCancelTransaction', {}).get('id'),
                 'timestamp': datetime.now(),
                 'success': True
             }
@@ -454,17 +457,21 @@ class OrderExecutor:
     def _get_current_price(self, instrument: str) -> Optional[float]:
         """Get current mid price for an instrument"""
         try:
-            response = self.ctx.pricing.get(
-                accountID=self.config.account_id,
-                instruments=instrument
-            )
+            url = f"{self.base_url}/accounts/{self.config.account_id}/pricing"
+            params = {'instruments': instrument}
             
-            for price in response.get('prices', []):
-                if price.instrument == instrument:
-                    bid = float(price.bids[0].price)
-                    ask = float(price.asks[0].price)
-                    return (bid + ask) / 2
-        except:
-            pass
-        
+            response = self.session.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            for price in data.get('prices', []):
+                if price.get('instrument') == instrument:
+                    bids = price.get('bids', [{}])
+                    asks = price.get('asks', [{}])
+                    if bids and asks:
+                        bid = float(bids[0].get('price', 0))
+                        ask = float(asks[0].get('price', 0))
+                        return (bid + ask) / 2
+        except Exception as e:
+            logger.error(f"Error getting current price: {e}")
         return None
