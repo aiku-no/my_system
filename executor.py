@@ -53,12 +53,11 @@ class OrderExecutor:
             # Determine price precision (5 for most, 3 for JPY pairs)
             precision = 3 if 'JPY' in instrument else 5
             
-            # Build order data
+            # Build order data - Market orders don't use timeInForce
             order_data = {
                 "order": {
                     "instrument": instrument,
                     "units": str(units),
-                    "timeInForce": "GTC",
                     "positionFill": "DEFAULT",
                     "type": "MARKET"
                 }
@@ -69,15 +68,14 @@ class OrderExecutor:
                 sl_price = round(stop_loss, precision)
                 order_data["order"]["stopLossOnFill"] = {
                     "price": str(sl_price),
-                    "timeInForce": "GTC"
+                    "triggerMode": "TOP_OF_BOOK"
                 }
             
             # Add take profit if provided
             if take_profit is not None:
                 tp_price = round(take_profit, precision)
                 order_data["order"]["takeProfitOnFill"] = {
-                    "price": str(tp_price),
-                    "timeInForce": "GTC"
+                    "price": str(tp_price)
                 }
             
             logger.info(f"Sending order to OANDA: {order_data}")
