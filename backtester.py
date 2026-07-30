@@ -10,10 +10,25 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.figure import Figure
 
-from config import TradingConfig, Timeframe, CurrencyPair, BacktestConfig
+from config import TradingConfig, Timeframe, CurrencyPair, BacktestConfig, OandaConfig
 from data_handler import DataHandler
 from strategy import TradingStrategy, StrategyType, SignalType
 from risk_manager import RiskManager
+
+# Combine configs for backtester
+class CombinedConfig:
+    def __init__(self):
+        self.trading = TradingConfig()
+        self.oanda = OandaConfig()
+        # Merge attributes
+        for attr in dir(self.trading):
+            if not attr.startswith('_'):
+                setattr(self, attr, getattr(self.trading, attr))
+        for attr in dir(self.oanda):
+            if not attr.startswith('_'):
+                setattr(self, attr, getattr(self.oanda, attr))
+
+Config = CombinedConfig
 
 logger = logging.getLogger(__name__)
 
@@ -102,10 +117,11 @@ class Backtester:
         logger.info(f"Period: {self.backtest_config.start_date} to {self.backtest_config.end_date}")
         
         # Get historical data
-        data_handler = DataHandler()
-        df = data_handler.get_historical_data(
+        config = Config()
+        data_handler = DataHandler(config)
+        df = data_handler.get_candles(
             pair.value, 
-            timeframe.value,
+            timeframe,
             count=5000  # Get enough data for backtesting
         )
         
